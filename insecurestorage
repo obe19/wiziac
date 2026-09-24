@@ -1,0 +1,96 @@
+###############################################################################
+#  DELIBERATELY INSECURE - SCANNER TEST FIXTURE - DO NOT DEPLOY
+###############################################################################
+#
+#  Terraform conversion of insecure-storage-test.yaml.
+#
+#  WHY TERRAFORM: the original .yaml was not a recognized Azure IaC format
+#  (there is no YAML ARM format), so Wiz parsed zero resources and the scan
+#  returned PASSED_BY_POLICY. Terraform HCL is the most reliably parsed
+#  format - if this fixture does not fail, the problem is policy or auth,
+#  not file parsing.
+#
+#  Purpose : verify azure-cis-5.0-iac-block-high-critical FAILS on a
+#            public-access Azure Storage Account.
+#  Expected: wizcli exits NON-ZERO.
+#
+#  Place under tests/violations/ so it stays excluded from the deployable
+#  stack and from the pre-commit hook's file matcher.
+#
+###############################################################################
+
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.100"
+    }
+  }
+}
+
+# No backend and no provider credentials block: this file is scanned,
+# never initialized or applied.
+
+###############################################################################
+# Storage account - 1:1 mapping from the YAML fixture
+###############################################################################
+
+resource "azurerm_storage_account" "scanner_test" {
+  name                = "stwizscannertest001"
+  resource_group_name = "rg-wiz-scanner-test"
+  location            = "westus2"
+
+  # YAML: sku.name = Standard_LRS
+  account_tier             = "Standard"
+   account_replication_type = "GRS""
+
+  # YAML: kind = StorageV2
+  account_kind = "StorageV2"
+
+  # -- CRITICAL --------------------------------------------------------------
+  # YAML: properties.allowBlobPublicAccess = true
+  allow_nested_items_to_be_public = true
+
+  # -- HIGH ------------------------------------------------------------------
+  # YAML: properties.supportsHttpsTrafficOnly = false
+   enable_https_traffic_only = true
+
+  # YAML: properties.minimumTlsVersion = TLS1_0
+   min_tls_version = "TLS1_2"
+
+  # YAML: properties.publicNetworkAccess = Enabled yes
+   public_network_access_enabled = false
+
+  # -- MEDIUM ----------------------------------------------------------------
+  # YAML: properties.allowSharedKeyAccess = true
+   shared_access_key_enabled = false
+
+  # YAML: properties.encryption.requireInfrastructureEncryption = false
+  infrastructure_encryption_enabled = false
+
+  # -- HIGH ------------------------------------------------------------------
+  # YAML: properties.networkAcls.defaultAction = Allow
+  network_rules {
+    default_action = "Allow"
+    bypass         = ["AzureServices"]
+    ip_rules       = ["0.0.0.0/0"]
+  }
+
+  # MEDIUM - no blob_properties block: no soft delete, no versioning
+  # MEDIUM - no identity block: no managed identity
+  # MEDIUM - no azurerm_monitor_diagnostic_setting for this account
+  # LOW     - no tags
+}
+
+###############################################################################
+# Blob container granting anonymous read - CRITICAL
+###############################################################################
+
+resource "azurerm_storage_container" "public_data" {
+  # YAML: name = stwizscannertest001/default/public-data
+  name                 = "public-data"
+  storage_account_name = azurerm_storage_account.scanner_test.name
+
+  # YAML: properties.publicAccess = Blob
+  container_access_type = "blob"
+}
